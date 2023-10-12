@@ -1,14 +1,25 @@
 #pragma once
 
-#if WIN32
+// https://github.com/xianyi/OpenBLAS/wiki/How-to-use-OpenBLAS-in-Microsoft-Visual-Studio#visual-studio-2017-c2017-standard
+// https://github.com/xianyi/OpenBLAS/issues/3661
+// https://github.com/Reference-LAPACK/lapack/issues/683
+// https://stackoverflow.com/questions/47520244/using-openblas-lapacke-in-visual-studio
+#if defined(_MSC_VER)
+    // https://developercommunity.visualstudio.com/t/_Fcomplex-and-_Dcomplex-removed-in-Windo/10108779#T-ND10301376
+    #define _CRT_USE_C_COMPLEX_H
+    #include "complex.h"
     #define LAPACK_COMPLEX_CUSTOM
-    #define lapack_complex_float float
-    #define lapack_complex_double double
+    #define lapack_complex_float _Fcomplex
+    #define lapack_complex_double _Dcomplex
+#elif defined(__clang__)
+    #pragma clang diagnostic ignored "-Wc99-extensions"
 #endif
 
 #include <cblas.h>
 #include <lapacke.h>
 #undef I // undefine this def due to complex.h that causes issues later
+
+typedef int BLAS_INT;
 
 #define BLAS(x,X) cblas_ ## x
 #define LAPACK(x,X) LAPACKE_ ## x

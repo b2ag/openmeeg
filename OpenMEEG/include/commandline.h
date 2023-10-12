@@ -1,54 +1,21 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #pragma once
 
 #include <iostream>
+#include <filesystem>
 #include <iomanip>
 #include <string>
+#include <vector>
 #include <sstream>
+#include <initializer_list>
 
-#ifdef WIN32
-#pragma warning( disable : 4530)    //MSVC standard library can't be inlined
-#pragma warning( disable : 4996)    //MSVC warning C4996: declared deprecated
-#pragma warning( disable : 4290)    //MSVC warning C4290: C++ exception specification
-#else
+#ifndef WIN32
 #define use_color_terminal
 #endif
 
@@ -63,12 +30,28 @@ knowledge of the CeCILL-B license and that you accept its terms.
 namespace OpenMEEG {
 
     class CommandLine {
+
+        typedef std::vector<const char*> Strings;
+
+        // Workaround a bug in old gcc compilers which does not allow the conversion of
+        // const std::initializer_list<const char* const> to const Strings.
+
+        typedef std::initializer_list<const char* const> List;
+
+        static Strings build_strings(const List& list) {
+            Strings strs;
+            strs.reserve(list.size());
+            for (const auto& item : list)
+                strs.push_back(item);
+            return strs;
+        }
+
     public:
 
-        CommandLine(const int argc,char* argv[],const std::string& usage): n(argc),args(argv) {
+        CommandLine(const int argc,char* argv[],const std::string& usage=""): n(argc),args(argv) {
             help = find_argument("-h")!=end() || find_argument("--help")!=end();
             if (help) {
-                std::cerr << red << basename(args[0]) << normal;
+                std::cerr << red << std::filesystem::path(args[0]).filename() << normal;
                 if (usage!="")
                     std::cerr << ": " << usage;
                 std::cerr << std::endl << std::endl;
@@ -94,6 +77,71 @@ namespace OpenMEEG {
                 std::cerr << "    " << bold << std::left << std::setw(8) << name << normal
                           << " = " << std::left << std::setw(12) << value(result)  << purple << usage << normal << std::endl;
             return result;
+        }
+
+        char** option(const std::string& option,const Strings& parms,const std::size_t num_mandatory_parms) const {
+            char** arg = find_argument(option);
+            if (arg==end())
+                return nullptr;
+
+            const std::size_t num_parms = num_args(arg);
+            if (num_parms<num_mandatory_parms) {
+                std::cerr << "\'" << args[0] << "\' option \'" << option << "\' expects at least "
+                          << num_mandatory_parms << " arguments (";
+                if (parms.size()!=0) {
+                    std::cerr << parms[0];
+                    for (unsigned i=1; i<parms.size(); ++i)
+                        std::cerr << ", " << parms[i];
+                }
+                std::cerr << ") and you gave only " << num_parms << " arguments." << std::endl;
+                exit(1);
+            }
+            return arg;
+        }
+
+        char** option(const std::string& name,const Strings& parms) const { return option(name,parms,parms.size()); }
+
+        char** option(const Strings& options,const Strings& parms) const {
+            std::size_t num_mandatory_parms = parms.size();
+            for (const auto& parm : parms)
+                if (parm[0]=='[')
+                    --num_mandatory_parms;
+
+            char** mandatory_args = nullptr;
+            for (const char* opt : options) {
+                char** arg = option(opt,parms,num_mandatory_parms);
+                if (arg!=nullptr) {
+                    if (mandatory_args!=nullptr) {
+                        std::cerr << "Warning: option " << *(options.begin()) << " provided multiple times!" << std::endl;
+                        exit(1);
+                    }
+                    mandatory_args = arg;
+                }
+            }
+            return mandatory_args;
+        }
+
+        // Workaround a bug in old gcc compilers which does not allow the conversion of
+        // const std::initializer_list<const char* const> to const Strings.
+
+        char** option(const std::string& name,const List& parms) const { return option(name,build_strings(parms));                   }
+        char** option(const List& options,const List& parms)     const { return option(build_strings(options),build_strings(parms)); }
+
+        // End of workaround.
+
+        unsigned num_args(char** argument) const {
+            unsigned res = 0;
+            for (char** arg=argument+1; arg!=end(); ++arg,++res)
+                if ((*arg)[0]=='-')
+                    break;
+            return res;
+        }
+
+        void print() const {
+            std::cout << std::endl << "| ------ " << args[0] << std::endl;
+            for (unsigned i=1; i<n; ++i)
+                std::cout << "| " << args[i] << std::endl;
+            std::cout << "| -----------------------" << std::endl;
         }
 
     private:
@@ -124,7 +172,7 @@ namespace OpenMEEG {
             return value;
         }
 
-        #if 1
+        #ifndef WIN32
         static constexpr char normal[9]      = { 0x1b, '[', '0', ';', '0', ';', '0', 'm', '\0' };
         static constexpr char red[11]        = { 0x1b, '[', '4', ';', '3', '1', ';', '5', '9', 'm', '\0' };
         static constexpr char bold[5]        = { 0x1b, '[', '1', 'm', '\0' };
@@ -143,14 +191,6 @@ namespace OpenMEEG {
         bool     help;
     };
 
-    inline void
-    print_commandline(const int argc,char **argv) {
-        std::cout << std::endl << "| ------ " << argv[0] << std::endl;
-        for (int i=1;i<argc;++i)
-            std::cout << "| " << argv[i] << std::endl;
-        std::cout << "| -----------------------" << std::endl;
-    }
-
     inline void print_version(const char* cmd) {
         #ifdef USE_OMP
             std::string omp_support = " using OpenMP\n Executing using " + std::to_string(omp_get_max_threads()) + " threads.";
@@ -166,48 +206,14 @@ namespace OpenMEEG {
         std::cout << display_info.str() << std::endl << std::endl;
     }
 
-#if 0
-    inline bool option(const char *const name, const int argc, char **argv,
-                       const bool defaut, const char *const usage=NULL) 
-    {
-        const char *s = command_line::option(name, argc, argv, (const char*)NULL);
-        const bool res = s?(command_line::strcasecmp(s,"false") && command_line::strcasecmp(s,"off") && command_line::strcasecmp(s,"0")):defaut;
-        command_line::option(name, 0, NULL, res?"true":"false", usage);
-        return res;
-    }
+    // Some command have mutually exclusive options.
+    // This helper function ensures that.
+    // The counter num_options is counting options in each exclusive group.
 
-    inline int option(const char *const name, const int argc, char **argv,
-                      const int defaut, const char *const usage=NULL) 
-    {
-        const char *s = command_line::option(name, argc, argv, (const char*)NULL);
-        const int res = s?std::atoi(s):defaut;
-        char tmp[256];
-        std::sprintf(tmp, "%d", res);
-        command_line::option(name, 0, NULL, tmp, usage);
-        return res;
+    inline void assert_non_conflicting_options(const char* command,const unsigned num_options) {
+        if (num_options!=1) {
+            std::cerr << "Error: providing mutually exclusive options to " << command << "!" << std::endl;
+            exit(1);
+        }
     }
-
-    inline char option(const char *const name, const int argc, char **argv,
-               const char defaut, const char *const usage=NULL) 
-    {
-        const char *s = command_line::option(name, argc, argv, (const char*)NULL);
-        const char res = s?s[0]:defaut;
-        char tmp[8];
-        tmp[0] = res;
-        tmp[1] ='\0';
-        command_line::option(name, 0, NULL, tmp, usage);
-        return res;
-    }
-
-    inline double option(const char *const name, const int argc, char **argv,
-             const double defaut, const char *const usage=NULL) 
-    {
-        const char *s = command_line::option(name, argc, argv, (const char*)NULL);
-        const double res = s?command_line::atof(s):defaut;
-        char tmp[256];
-        std::sprintf(tmp, "%g", res);
-        command_line::option(name, 0, NULL, tmp, usage);
-        return res;
-    }
-#endif
 }

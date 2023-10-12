@@ -1,46 +1,16 @@
-/* OpenMEEG
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
-
-#if WIN32
+#ifdef WIN32
 #define _USE_MATH_DEFINES
 #endif
 
 #include <om_common.h>
+#include <logger.h>
 #include <matrix.h>
 #include <symmatrix.h>
 #include <matop.h>
@@ -55,28 +25,9 @@ namespace OpenMEEG {
     namespace Details {
 
         template <typename T>
-        void deflate(T& M,const Interface& interface,const double coef) {
-            //  deflate the Matrix
-            for (const auto& omesh : interface.oriented_meshes()) {
-                const Mesh& mesh     = omesh.mesh();
-                const auto& vertices = mesh.vertices();
-                for (auto vit1=vertices.begin();vit1!=vertices.end();++vit1) {
-                    #pragma omp parallel for
-                    #if defined NO_OPENMP || defined OPENMP_ITERATOR
-                    for (auto vit2=vit1; vit2<vertices.end(); ++vit2) {
-                    #else
-                    for (int i2=vit1-vertices.begin();i2<vertices.size();++i2) {
-                        const auto vit2 = vertices.begin()+i2;
-                    #endif
-                        M((*vit1)->index(),(*vit2)->index()) += coef;
-                    }
-                }
-            }
-        }
-
-        template <typename T>
         void deflate(T& M,const Geometry& geo) {
             //  deflate all current barriers as one
+            ThreadException e;
             for (const auto& part : geo.isolated_parts()) {
                 unsigned nb_vertices = 0;
                 unsigned i_first = 0;
@@ -95,11 +46,14 @@ namespace OpenMEEG {
                             #if defined NO_OPENMP || defined OPENMP_ITERATOR
                             for (auto vit2=vit1; vit2<vertices.end(); ++vit2) {
                             #else
-                            for (int i2=vit1-vertices.begin();i2<vertices.size();++i2) {
+                            for (int i2=vit1-vertices.begin();i2<static_cast<int>(vertices.size());++i2) {
                                 const auto vit2 = vertices.begin()+i2;
                             #endif
-                                M((*vit1)->index(),(*vit2)->index()) += coef;
+                                e.Run([&](){
+                                    M((*vit1)->index(),(*vit2)->index()) += coef;
+                                });
                             }
+                            e.Rethrow();
                         }
                     }
             }
@@ -116,11 +70,12 @@ namespace OpenMEEG {
             const Mesh& mesh;
         };
 
-        template <typename Selector>
-        SymMatrix HeadMatrix(const Geometry& geo,const unsigned gauss_order,const Selector& disableBlock) {
+        template <typename TYPE,typename Selector>
+        TYPE HeadMatrix(const Geometry& geo,const Integrator& integrator,const Selector& disableBlock) {
 
-            SymMatrix symmatrix(geo.nb_parameters()-geo.nb_current_barrier_triangles());
-            symmatrix.set(0.0);
+            log_stream(INFORMATION) << "Assembling Head Matrix" << std::endl;
+            TYPE symmatrix(geo.nb_parameters()-geo.nb_current_barrier_triangles());
+            HeadMatrixBlocks<TYPE>::init(symmatrix);
 
             // Iterate over pairs of communicating meshes (sharing a domains) to fill the
             // lower half of the HeadMat (since it is symmetric).
@@ -128,40 +83,39 @@ namespace OpenMEEG {
             for (const auto& mp : geo.communicating_mesh_pairs()) {
                 const Mesh& mesh1 = mp(0);
                 const Mesh& mesh2 = mp(1);
+                log_stream(INFORMATION) << "Assembling " << mesh1.name() << " x " << mesh2.name();
 
-                const double factor = mp.relative_orientation()*K;
-
-                double Ncoeff;
-                if (!mesh1.current_barrier() && !mesh2.current_barrier() && !disableBlock(mesh1,mesh2)) {
-                    // Computing S block first because it is needed for the corresponding N block
-                    const double inv_cond = geo.sigma_inv(mesh1,mesh2);
-                    OpenMEEG::operatorS(mesh1,mesh2,symmatrix,factor*inv_cond,gauss_order);
-                    Ncoeff = geo.sigma(mesh1,mesh2)/inv_cond;
-                } else {
-                    Ncoeff = factor*geo.sigma(mesh1,mesh2);
+                if (disableBlock(mesh1,mesh2)) {
+                    log_stream(INFORMATION) << " (skipped)" << std::endl;
+                    continue;
                 }
+                const double factor     =  mp.relative_orientation()*K;
+                const double SCondCoeff =  factor*geo.sigma_inv(mesh1,mesh2);
+                const double NCondCoeff =  factor*geo.sigma(mesh1,mesh2);
+                const double DCondCoeff = -factor*geo.indicator(mesh1,mesh2);
 
-                const double Dcoeff = -factor*geo.indicator(mesh1,mesh2);
-                if (!mesh1.current_barrier() && !disableBlock(mesh1,mesh2))
-                    OpenMEEG::operatorD(mesh1,mesh2,symmatrix,Dcoeff,gauss_order);
+                const double coeffs[3] = { SCondCoeff, NCondCoeff, DCondCoeff };
 
-                if (mesh1!=mesh2 && !mesh2.current_barrier())
-                    OpenMEEG::operatorDstar(mesh1,mesh2,symmatrix,Dcoeff,gauss_order);
-
-                // Computing N block
-
-                if (!disableBlock(mesh1,mesh2))
-                    OpenMEEG::operatorN(mesh1,mesh2,symmatrix,Ncoeff,gauss_order);
+                if (&mesh1==&mesh2) {
+                    log_stream(INFORMATION) << " (self) setting blocks" << std::endl;
+                    HeadMatrixBlocks<DiagonalBlock> operators(DiagonalBlock(mesh1,integrator));
+                    operators.set_blocks(coeffs,symmatrix);
+                } else {
+                    log_stream(INFORMATION) << " setting blocks" << std::endl;
+                    HeadMatrixBlocks<NonDiagonalBlock> operators(NonDiagonalBlock(mesh1,mesh2,integrator));
+                    operators.set_blocks(coeffs,symmatrix);
+                }
             }
 
             // Deflate all current barriers as one
-
+            log_stream(INFORMATION) << "Deflating current barriers" << std::endl;
             deflate(symmatrix,geo);
-
+            log_stream(INFORMATION) << "done" << std::endl;
             return symmatrix;
         }
     }
 
+    #if 0
     SymMatrix conductivity_coefficients(const Geometry& geo) {
         SymMatrix cond_coeffs(10,10);
         for (const auto& mp : geo.communicating_mesh_pairs()) {
@@ -174,79 +128,86 @@ namespace OpenMEEG {
         }
         return cond_coeffs;
     }
+    #endif
 
-    HeadMat::HeadMat(const Geometry& geo,const unsigned gauss_order) {
-        SymMatrix& symmatrix = *this;
-        symmatrix = Details::HeadMatrix(geo,gauss_order,Details::AllBlocks());
+    SymMatrix HeadMat(const Geometry& geo,const Integrator& integrator) {
+        return Details::HeadMatrix<SymMatrix>(geo,integrator,Details::AllBlocks());
     }
 
-    Matrix HeadMatrix(const Geometry& geo,const Interface& Cortex,const unsigned gauss_order,const unsigned extension=0) {
+    Matrix HeadMatrix(const Geometry& geo,const Interface& Cortex,const Integrator& integrator,const unsigned extension=0) {
 
+        log_stream(INFORMATION) << "Computing HeadMatrix." << std::endl;
         const Mesh& cortex = Cortex.oriented_meshes().front().mesh();
-        const SymMatrix& symmatrix = Details::HeadMatrix(geo,gauss_order,Details::AllButBlock(cortex));
+        log_stream(INFORMATION) << "    Found cortex mesh " << cortex.name() << std::endl;
+        const SymMatrix& symmatrix = Details::HeadMatrix<SymMatrix>(geo,integrator,Details::AllButBlock(cortex));
 
         // Copy symmatrix into the returned matrix except for the lines related to the cortex
         // (vertices [i_vb_c, i_ve_c] and triangles [i_tb_c, i_te_c]).
 
+        log_stream(INFORMATION) << "    Copying symmatrix into the returned matrix";
         const unsigned Nl = geo.nb_parameters()-geo.nb_current_barrier_triangles()-Cortex.nb_vertices()-Cortex.nb_triangles()+extension;
+        log_stream(INFORMATION) << " with " << Nl << " lines" << std::endl;
 
         Matrix matrix = Matrix(Nl,symmatrix.ncol());
         matrix.set(0.0);
         unsigned iNl = 0;
         for (const auto& mesh : geo.meshes())
             if (mesh!=cortex) {
+                log_stream(INFORMATION) << "Processing mesh " << mesh.name() << " : vertices";
                 for (const auto& vertex : mesh.vertices())
                     matrix.setlin(iNl++,symmatrix.getlin(vertex->index()));
-                if (!mesh.current_barrier())
+                if (!mesh.current_barrier()) {
+                    log_stream(INFORMATION) << " : triangles";
                     for (const auto& triangle : mesh.triangles())
                         matrix.setlin(iNl++,symmatrix.getlin(triangle.index()));
+                }
+                log_stream(INFORMATION) << " done." << std::endl;
             }
 
         return matrix;
     }
 
-    CorticalMat::CorticalMat(const Geometry& geo,const Head2EEGMat& M,const std::string& domain_name,
-                             const unsigned gauss_order,const double alpha,const double beta,const std::string& filename)
+    Matrix CorticalMat(const Geometry& geo,const SparseMatrix& M,const std::string& domain_name,
+                       const double alpha,const double beta,const std::string& filename,const Integrator& integrator)
     {
-        Matrix& mat = *this;
-
-        // Following the article: M. Clerc, J. Kybic "Cortical mapping by Laplace–Cauchy transmission using a boundary element method".
+        // Following the article: M. Clerc, J. Kybic "Cortical mapping by Laplace–Cauchy transmission using
+        // a boundary element method".
         // Assumptions:
-        // - domain_name: the domain containing the sources is an innermost domain (defined as the interior of only one interface (called Cortex))
+        // - domain_name: the domain containing the sources is an innermost domain (defined as the interior of
+        //   only one interface (called Cortex))
         // - Cortex interface is composed of one mesh only (no shared vertices).
 
         const Domain& SourceDomain = geo.domain(domain_name);
         const Interface& Cortex    = SourceDomain.boundaries().front().interface();
-        
+
         om_error(SourceDomain.boundaries().size()==1);
         om_error(Cortex.oriented_meshes().size()==1);
 
         // shape of the new matrix:
 
-        const unsigned Nl = geo.nb_parameters()-geo.nb_current_barrier_triangles()-Cortex.nb_vertices()-Cortex.nb_triangles();
-        const unsigned Nc = geo.nb_parameters()-geo.nb_current_barrier_triangles();
         Matrix P;
         std::fstream f(filename.c_str());
         if (!f) {
-            const Matrix& mat = HeadMatrix(geo,Cortex,gauss_order);
+            const Matrix& mat = HeadMatrix(geo,Cortex,integrator);
 
             //  Construct P: the null-space projector.
             //  P is a projector: P^2 = P and mat*P*X = 0
 
             P = nullspace_projector(mat);
             if (filename.length()!=0) {
-                std::cout << "Saving projector P (" << filename << ")." << std::endl;
+                log_stream(INFORMATION) << "Saving projector P (" << filename << ")." << std::endl;
                 P.save(filename);
             }
         } else {
-            std::cout << "Loading projector P (" << filename << ")." << std::endl;
+            log_stream(INFORMATION) << "Loading projector P (" << filename << ")." << std::endl;
             P.load(filename);
         }
 
         // ** Get the gradient of P1&P0 elements on the meshes **
 
+        const unsigned Nc = geo.nb_parameters()-geo.nb_current_barrier_triangles();
         SymMatrix RR(Nc,Nc);
-        RR.set(0.);
+        RR.set(0.0);
         for (const auto& mesh : geo.meshes())
             mesh.gradient_norm2(RR);
 
@@ -262,9 +223,9 @@ namespace OpenMEEG {
             alphas.set(0.);
             alpha1 = MM.frobenius_norm()/(1.e3*nRR_v);
             beta1  = alpha1*50000.;
-            std::cout << "AUTOMATIC alphas = " << alpha1 << "\tbeta = " << beta1 << std::endl;
+            log_stream(INFORMATION) << "AUTOMATIC alphas = " << alpha1 << "\tbeta = " << beta1 << std::endl;
         } else {
-            std::cout << "alphas = " << alpha << "\tbeta = " << beta << std::endl;
+            log_stream(INFORMATION) << "alphas = " << alpha << "\tbeta = " << beta << std::endl;
         }
 
         for (const auto& vertex : geo.vertices())
@@ -283,21 +244,20 @@ namespace OpenMEEG {
         // X = P * { P'*(MM + a*RR)*P }¡(-1) * P'*M'm
         // X = P * Z¡(-1) * P' * M'm
 
-        Matrix rhs = P.transpose()*M.transpose();
-        mat = P*Z.pinverse()*rhs;
+        const Matrix& rhs = P.transpose()*M.transpose();
+        return P*Z.pinverse()*rhs;
     }
 
-    CorticalMat2::CorticalMat2(const Geometry& geo,const Head2EEGMat& M,const std::string& domain_name,
-                               const unsigned gauss_order,const double gamma,const std::string &filename)
+    Matrix CorticalMat2(const Geometry& geo,const SparseMatrix& M,const std::string& domain_name,
+                        const double gamma,const std::string& filename,const Integrator& integrator)
     {
-        Matrix& mat = *this;
-
-        // Re-writting of the optimization problem in M. Clerc, J. Kybic "Cortical mapping by Laplace–Cauchy transmission using a boundary element method".
+        // Re-writting of the optimization problem in M. Clerc, J. Kybic "Cortical mapping by Laplace–Cauchy
+        // transmission using a boundary element method".
         // with a Lagrangian formulation as in see http://www.math.uh.edu/~rohop/fall_06/Chapter3.pdf eq3.3
-        // find argmin(norm(gradient(X)) under constraints: 
+        // find argmin(norm(gradient(X)) under constraints:
         // H*X = 0 and M*X = m
         // let G be the gradient norm matrix, l1, l2 the lagrange parameters
-        // 
+        //
         // [ G  H' M'] [ X  ]   [ 0 ]
         // | H  0    | | l1 | = | 0 |
         // [ M     0 ] [ l2 ]   [ m ]
@@ -306,12 +266,13 @@ namespace OpenMEEG {
         //      K
         // we want a submatrix of the inverse of K (using block-wise inversion, (TODO maybe iterative solution better ?)).
         // Assumptions:
-        // - domain_name: the domain containing the sources is an innermost domain (defined as the interior of only one interface (called Cortex)
+        // - domain_name: the domain containing the sources is an innermost domain (defined as the interior of only one
+        //   interface (called Cortex)
         // - Cortex interface is composed of one mesh only (no shared vertices)
 
         const Domain& SourceDomain = geo.domain(domain_name);
         const Interface& Cortex    = SourceDomain.boundaries().front().interface();
-        
+
         om_error(SourceDomain.boundaries().size()==1);
         om_error(Cortex.oriented_meshes().size()==1);
 
@@ -320,13 +281,13 @@ namespace OpenMEEG {
         std::fstream f(filename.c_str());
         Matrix H;
         if (!f) {
-            H = HeadMatrix(geo,Cortex,gauss_order,M.nlin());
+            H = HeadMatrix(geo,Cortex,integrator,M.nlin());
             if (filename.length()!=0) {
-                std::cout << "Saving matrix H (" << filename << ")." << std::endl;
+                log_stream(INFORMATION) << "Saving matrix H (" << filename << ")." << std::endl;
                 H.save(filename);
             }
         } else {
-            std::cout << "Loading matrix H (" << filename << ")." << std::endl;
+            log_stream(INFORMATION) << "Loading matrix H (" << filename << ")." << std::endl;
             H.load(filename);
         }
 
@@ -353,47 +314,51 @@ namespace OpenMEEG {
             if (!mesh.current_barrier())
                 for (const auto& triangle1 : mesh.triangles())
                     for (const auto& triangle2 : mesh.triangles())
-                        G(triangle1.index(),triangle1.index()) *= gamma;
+                        G(triangle1.index(),triangle2.index()) *= gamma;
 
-        std::cout << "gamma = " << gamma << std::endl;
+        log_stream(INFORMATION) << "gamma = " << gamma << std::endl;
 
         G.invert();
-        mat = (G*H.transpose()*(H*G*H.transpose()).inverse()).submat(0,Nc,Nl,M.nlin());
+        return (G*H.transpose()*(H*G*H.transpose()).inverse()).submat(0,Nc,Nl,M.nlin());
     }
 
-    Surf2VolMat::Surf2VolMat(const Geometry& geo,const Matrix& points) {
+    Matrix Surf2VolMat(const Geometry& geo,const Matrix& points) {
 
         // Find the points per domain and generate the indices for the m_points
+        // What happens if a point is on the boundary of a domain ? TODO
 
         std::map<const Domain*,Vertices> m_points;
         unsigned index = 0;
-        for (unsigned i=0;i<points.nlin();++i) {
-            const Domain& domain = geo.domain(Vect3(points(i,0),points(i,1),points(i,2))); // TODO: see Vertex below....
+        for (unsigned i=0; i<points.nlin(); ++i) {
+            const Vect3 point(points(i,0),points(i,1),points(i,2));
+            const Domain& domain = geo.domain(point);
             if (domain.conductivity()==0.0) {
-                std::cerr << " Surf2Vol: Point [ " << points.getlin(i);
-                std::cerr << "] is inside a non-conductive domain. Point is dropped." << std::endl;
+                log_stream(INFORMATION) << " Surf2Vol: Point [ " << points.getlin(i) << "]"
+                                        << " is inside a non-conductive domain. Point is dropped." << std::endl;
             } else {
-                m_points[&domain].push_back(Vertex(points(i,0), points(i,1),points(i,2),index++));
+                m_points[&domain].push_back(Vertex(point,index++));
             }
         }
 
-        Matrix& mat = *this;
+        // At this point index is the total number of inside points.
 
-        unsigned size = 0; // total number of inside points
-        for (const auto& map_element : m_points)
-            size += map_element.second.size();
+        const unsigned size = index; // total number of inside points
 
-        mat = Matrix(size,(geo.nb_parameters()-geo.nb_current_barrier_triangles()));
+        Matrix mat(size,geo.nb_parameters()-geo.nb_current_barrier_triangles());
         mat.set(0.0);
 
-        for (const auto& map_element : m_points)
-            for (const auto& mesh : geo.meshes()) {
-                const int orientation = map_element.first->mesh_orientation(mesh);
-                if (orientation!=0) {
-                    operatorDinternal(mesh,mat,map_element.second,-orientation*K);
+        for (const auto& [domainptr,pts] : m_points) {
+            for (const auto& boundary : domainptr->boundaries())
+                for (const auto& omesh : boundary.interface().oriented_meshes()) {
+                    const Mesh& mesh = omesh.mesh();
+                    const PartialBlock block(mesh);
+                    const double coeff = boundary.mesh_orientation(omesh)*K;
+                    block.addD(-coeff,pts,mat);
                     if (!mesh.current_barrier())
-                        operatorSinternal(mesh,mat,map_element.second,orientation*K/map_element.first->conductivity());
+                        block.S(coeff/domainptr->conductivity(),pts,mat);
                 }
-            }
+        }
+
+        return mat;
     }
 }

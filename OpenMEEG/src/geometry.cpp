@@ -1,46 +1,15 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #include <geometry.h>
 #include <MeshIO.h>
 #include <GeometryIO.h>
 #include <PropertiesSpecialized.h>
+#include <logger.h>
 
 namespace OpenMEEG {
 
@@ -63,7 +32,7 @@ namespace OpenMEEG {
                 return domain;
         }
 
-        warning("Geometry::outermost_domain: Error outermost domain is not defined.");
+        log_stream(WARNING) << "Geometry::outermost_domain: Error outermost domain is not defined.";
         throw OpenMEEG::BadDomain("outermost");
     }
 
@@ -71,7 +40,7 @@ namespace OpenMEEG {
     Geometry::innermost_interface() const {
 
         if (!is_nested()) {
-            warning("Geometry::innermost_interface: Error innermost interface is only defined for nested geometries.");
+            log_stream(WARNING) << "Geometry::innermost_interface: Error innermost interface is only defined for nested geometries.";
             throw OpenMEEG::BadInterface("innermost");
         }
 
@@ -88,7 +57,7 @@ namespace OpenMEEG {
 
         // Should never append as this function should only be called for nested geometries.
 
-        warning("Geometry::innerermost_interface: Error innermost interface is not defined.");
+        log_stream(WARNING) << "Geometry::innerermost_interface: Error innermost interface is not defined.";
         throw OpenMEEG::BadInterface("innermost");
     }
 
@@ -100,18 +69,22 @@ namespace OpenMEEG {
 
         // Should never append
 
-        warning("Geometry::outermost_interface: Error outermost interface were not set.");
+        log_stream(WARNING) << "Geometry::outermost_interface: Error outermost interface were not set.";
         throw OpenMEEG::BadInterface("outermost");
     }
 
     Mesh& Geometry::mesh(const std::string& id) {
+
         for (auto& mesh: meshes())
             if (mesh.name()==id)
                 return mesh;
 
         // Should never happen
 
-        warning(std::string("Geometry::mesh: Error mesh id/name not found: ") + id);
+        std::ostringstream oss;
+        for (auto& mesh: meshes())
+            oss << mesh.name() << ' ';
+        log_stream(WARNING) << "Geometry::mesh: Error mesh id/name not found: " << id << " from candidates: " + oss.str();
         throw OpenMEEG::BadInterface(id);
     }
 
@@ -122,7 +95,7 @@ namespace OpenMEEG {
 
         // Should never happen
 
-        warning(std::string("Geometry::mesh: Error mesh id/name not found: ") + id);
+        log_stream(WARNING) << "Geometry::mesh: Error mesh id/name not found: " << id;
         throw OpenMEEG::BadInterface(id);
     }
 
@@ -130,9 +103,10 @@ namespace OpenMEEG {
         if (is_nested()) {
             std::cout << "This geometry is a NESTED geometry." << std::endl;
         } else {
-            int shared = -vertices().size();
+            unsigned shared = 0;
             for (const auto& mesh : meshes())
                 shared += mesh.vertices().size();
+            shared -= vertices().size();
 
             // those are not the number of shared vertices but the number of demands for adding the same vertex...
             std::cout << "This geometry is a NON NESTED geometry. (There was " << shared << " demands for adding same vertices)." << std::endl;
@@ -161,7 +135,7 @@ namespace OpenMEEG {
                     return boundary.interface();
 
         // Should never append
-        warning(std::string("Geometry::interface: Interface id/name \"")+id+std::string("\" not found."));
+        log_stream(WARNING) << "Geometry::interface: Interface id/name \"" << id << "\" not found.";
         throw OpenMEEG::BadInterface(id);
     }
 
@@ -182,20 +156,20 @@ namespace OpenMEEG {
 
         // Should never happen
 
-        warning(std::string("Geometry::domain: Domain id/name \"") + name + std::string("\" not found."));
+        log_stream(WARNING) << "Geometry::domain: Domain id/name \"" << name << "\" not found.";
         throw OpenMEEG::BadDomain(name);
     }
 
     void Geometry::save(const std::string& filename) const {
-        GeometryIO* io = GeometryIO::create(filename);
         try {
+            GeometryIO* io = GeometryIO::create(filename);
             io->save(*this);
         } catch (OpenMEEG::Exception& e) {
-            std::cerr << e.what() << " in the file " << filename << std::endl;
-            exit(e.code());
+            std::string& message = e.what();
+            message += " in the file "+filename+'.';
+            throw;
         } catch (...) {
-            std::cerr << "Could not read the geometry file: " << filename << std::endl;
-            exit(1);
+            throw GenericError(std::string("Could not write the geometry file: ")+filename+'.');
         }
     }
 
@@ -204,11 +178,15 @@ namespace OpenMEEG {
         try {
             io->load(*this);
         } catch (OpenMEEG::Exception& e) {
-            std::cerr << e.what() << " in the file " << filename << std::endl;
-            exit(e.code());
+            std::string& message = e.what();
+            message += " in the file "+filename+'.';
+            throw;
+        } catch (std::invalid_argument& e) {
+            std::string message = e.what();
+            message += " for the file "+filename+'.';
+            throw std::invalid_argument(message);
         } catch (...) {
-            std::cerr << "Could not read the geometry file: " << filename << std::endl;
-            exit(1);
+            throw OpenMEEG::GenericError(std::string("Could not read the geometry file: ")+filename+'.');
         }
     }
 
@@ -229,7 +207,7 @@ namespace OpenMEEG {
             const std::string& path = desc.second;
             MeshIO* io = MeshIO::create(path);
             io->open();
-            io->load_points(*this); 
+            io->load_points(*this);
             mesh_descriptions.push_back({ name, io });
         }
 
@@ -254,22 +232,19 @@ namespace OpenMEEG {
             // Store the internal conductivity of the external boundary of domain i
             // and store the external conductivity of the internal boundary of domain i
 
-            for (auto& domain : domains()) {
-                try {
-                    const Conductivity<double>& cond = properties.find(domain.name());
-                    domain.set_conductivity(cond.sigma());
-                } catch (const Utils::Properties::UnknownProperty<HeadProperties::Id>& e) {
-                    throw OpenMEEG::BadDomain(domain.name());
-                }
+            for (auto& domain : domains()) try {
+                const Conductivity<double>& cond = properties.find(domain.name());
+                domain.set_conductivity(cond.sigma());
+            } catch (const Utils::Properties::UnknownProperty<HeadProperties::Id>&) {
+                throw OpenMEEG::BadDomain(domain.name());
             }
         } catch (OpenMEEG::Exception& e) {
-            std::cerr << e.what() << " in the file " << filename << std::endl;
-            exit(e.code());
+            std::string& message = e.what();
+            message += " in the file "+filename+'.';
+            throw;
         } catch (...) {
-            std::cerr << "Could not read the conductivity file: " << filename << std::endl;
-            exit(1);
+            throw OpenMEEG::GenericError(std::string("Could not read the conductivity file: ")+filename+'.');
         }
-        conductivities = true;
     }
 
     // This generates unique indices for vertices and triangles which will correspond to our unknowns.
@@ -315,23 +290,6 @@ namespace OpenMEEG {
         num_params = index;
     }
 
-    /// \return the difference of conductivities of the 2 domains.
-
-    double Geometry::conductivity_difference(const Mesh& m) const {
-        const DomainsReference& doms = domains(m);
-        double res = 0.0;
-        for (const auto& domainptr : doms)
-            res += domainptr->conductivity()*domainptr->mesh_orientation(m);
-        return res;
-    }
-
-    /// \return 0. for non communicating meshes, 1. for same oriented meshes, -1. for different orientation
-
-    int Geometry::oriented(const Mesh& m1,const Mesh& m2) const {
-        const DomainsReference& doms = common_domains(m1,m2); // 2 meshes have either 0, 1 or 2 domains in common
-        return (doms.size()==0) ? 0 : ((doms[0]->mesh_orientation(m1)==doms[0]->mesh_orientation(m2)) ? 1 : -1);
-    }
-
     bool Geometry::selfCheck() const {
 
         bool OK = true;
@@ -341,19 +299,19 @@ namespace OpenMEEG {
         for (Meshes::const_iterator mit1=meshes().begin();mit1!=meshes().end();++mit1) {
             const Mesh& mesh1 = *mit1;
             if (!mesh1.has_correct_orientation())
-                warning(std::string("A mesh does not seem to be properly oriented"));
+                log_stream(WARNING) << "A mesh does not seem to be properly oriented";
 
             if (mesh1.has_self_intersection()) {
-                warning(std::string("Mesh is self intersecting !"));
+                log_stream(WARNING) << "Mesh is self intersecting !";
                 mesh1.info();
                 OK = false;
-                std::cout << "Self intersection for mesh \"" << mesh1.name() << "\"" << std:: endl;
+                log_stream(WARNING) << "Self intersection for mesh \"" << mesh1.name() << "\"" << std:: endl;
             }
             if (is_nested()) {
                 for (Meshes::const_iterator mit2=mit1+1;mit2!=meshes().end();++mit2) {
                     const Mesh& mesh2 = *mit2;
                     if (mesh1.intersection(mesh2)) {
-                        warning(std::string("2 meshes are intersecting !"));
+                        log_stream(WARNING) << "2 meshes are intersecting !";
                         mesh1.info();
                         mesh2.info();
                         OK = false;
@@ -367,13 +325,13 @@ namespace OpenMEEG {
     bool Geometry::check(const Mesh& m) const {
         bool OK = true;
         if (m.has_self_intersection()) {
-            warning(std::string("Mesh is self intersecting !"));
+            log_stream(WARNING) << "Mesh is self intersecting !";
             m.info();
             OK = false;
         }
         for (const auto& mesh : meshes())
             if (mesh.intersection(m)) {
-                warning(std::string("Mesh is intersecting with one of the mesh in geom file !"));
+                log_stream(WARNING) << "Mesh is intersecting with one of the mesh in geom file !";
                 mesh.info();
                 OK = false;
             }
@@ -386,17 +344,17 @@ namespace OpenMEEG {
     bool Geometry::check_inner(const Matrix& mat) const {
 
         if (!is_nested()) {
-            std::cerr << "Dipoles are only allowed when geometry is nested." << std::endl;
+            log_stream(WARNING) << "Dipoles are only allowed when geometry is nested." << std::endl;
             return false;
         };
 
         const Interface& interface = innermost_interface();
         unsigned n_outside = 0;
-        for (int i=0; i<mat.nlin(); i++)
+        for (unsigned i=0; i<mat.nlin(); ++i)
             if (!interface.contains(Vect3(mat(i,0),mat(i,1),mat(i,2))))
                 ++n_outside;
         if (n_outside!=0) {
-            std::cerr << n_outside << " points are outside of the inner compartment." << std::endl;
+            log_stream(WARNING) << n_outside << " points are outside of the inner compartment." << std::endl;
             return false;
         }
         return true;
@@ -430,6 +388,7 @@ namespace OpenMEEG {
                     for (const auto& oriented_mesh : boundary.interface().oriented_meshes())
                         if (oriented_mesh.mesh()==mesh)
                             m_oriented += oriented_mesh.orientation();
+            log_stream(DEBUG) << "check_geometry_is_nested() complete, nested=" << nested << ", m_oriented=" << m_oriented << std::endl;
             if (m_oriented==0) {
                 nested = false;
                 return;
@@ -443,7 +402,7 @@ namespace OpenMEEG {
         for (const auto& mesh1 : meshes())
             if (!mesh1.isolated())
                 for (const auto& mesh2 : meshes()) {
-                    const int orientation = oriented(mesh1,mesh2);
+                    const int orientation = relative_orientation(mesh1,mesh2);
                     if ((!mesh2.isolated()) && (sigma(mesh1,mesh2)!=0.0) && orientation!=0) {
                         // Communicating meshes are used for the definition of a common domain
                         meshpairs.push_back(MeshPair(mesh1,mesh2,orientation));
@@ -474,9 +433,9 @@ namespace OpenMEEG {
                         if (fully_immersed) {
                             oriented_mesh.mesh().isolated()  = true;
                             oriented_mesh.mesh().outermost() = false;
-                            std::cout << "Mesh \"" << oriented_mesh.mesh().name()
-                                      << "\" will be excluded from computation because it touches non-conductive domains on both sides."
-                                      << std::endl;
+                            log_stream(INFORMATION) << "Mesh \"" << oriented_mesh.mesh().name() << "\""
+                                                    << " will be excluded from computation because it touches non-conductive domains on both sides."
+                                                    << std::endl;
 
                             //  Add all of its vertices to invalid_vertices
 
@@ -548,16 +507,16 @@ namespace OpenMEEG {
         //  Report isolated geometries
 
         if (independant_parts.size()>1) {
-            std::cout << "The geometry is cut into several unrelated parts by non-conductive domains." << std::endl
-                      << "The computation will continue. But note that electric potentials from different parts are not comparable."
-                      << std::endl;
+            log_stream(INFORMATION) << "The geometry is cut into several unrelated parts by non-conductive domains." << std::endl
+                                    << "The computation will continue. But note that electric potentials from different parts are not comparable."
+                                    << std::endl;
 
             unsigned p =0;
             for (const auto& part : independant_parts) {
-                std::cout << "Part " << ++p << " is formed by meshes: { ";
+                log_stream(INFORMATION) << "Part " << ++p << " is formed by meshes: { ";
                 for (const auto& meshptr : part)
-                    std::cout << "\"" << meshptr->name() << "\" ";
-                std::cout << "}." << std::endl;
+                    log_stream(INFORMATION) << "\"" << meshptr->name() << "\" ";
+                log_stream(INFORMATION) << "}." << std::endl;
             }
         }
     }

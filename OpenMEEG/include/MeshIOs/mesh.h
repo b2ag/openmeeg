@@ -1,41 +1,9 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #pragma once
 
@@ -62,12 +30,12 @@ namespace OpenMEEG::MeshIOs {
 
             unsigned char uc[5];
             fs.read(reinterpret_cast<char*>(uc),5); // File format
-            fs.read(reinterpret_cast<char*>(uc),4); // lbindian
+            fs.read(reinterpret_cast<char*>(uc),4); // little/big endian
             //  TODO: we should check that these values are correct.
 
             unsigned arg_size;
-            fs.read(reinterpret_cast<char*>(&arg_size),sizeof(unsigned));
-            fs.ignore(arg_size);
+            fs.read(reinterpret_cast<char*>(&arg_size),sizeof(unsigned)); // Should be 4
+            fs.read(reinterpret_cast<char*>(&arg_size),arg_size); // Should be characters VOID.
 
             unsigned vertex_per_face;
             fs.read(reinterpret_cast<char*>(&vertex_per_face),sizeof(unsigned));
@@ -75,9 +43,7 @@ namespace OpenMEEG::MeshIOs {
             unsigned mesh_time;
             fs.read(reinterpret_cast<char*>(&mesh_time),sizeof(unsigned));
             fs.ignore(sizeof(unsigned)); // mesh_step
-            unsigned npts;
-            fs.read(reinterpret_cast<char*>(&npts),sizeof(unsigned));
-            
+
             // Support only for triangulations and one time frame.
 
             if (vertex_per_face!=3)
@@ -85,6 +51,9 @@ namespace OpenMEEG::MeshIOs {
 
             if (mesh_time!=1)
                 throw std::invalid_argument("OpenMEEG only handles 3D surfacic meshes with one time frame.");
+
+            unsigned npts;
+            fs.read(reinterpret_cast<char*>(&npts),sizeof(unsigned));
 
             float* coords = new float[3*npts]; // Point coordinates
             fs.read(reinterpret_cast<char*>(coords),3*npts*sizeof(float));
@@ -94,7 +63,7 @@ namespace OpenMEEG::MeshIOs {
             indmap = geom.add_vertices(vertices);
             delete[] coords;
 
-            fs.ignore(sizeof(unsigned));
+            fs.read(reinterpret_cast<char*>(&npts),sizeof(unsigned)); // Number of normals
             fs.ignore(3*npts*sizeof(float)); // Ignore normals.
             fs.ignore(sizeof(unsigned));
         }
@@ -119,8 +88,8 @@ namespace OpenMEEG::MeshIOs {
             unsigned char format[5] = {'b', 'i', 'n', 'a', 'r'}; // File format
             os.write(reinterpret_cast<char*>(format),5);
 
-            unsigned char lbindian[4] = {'D', 'C', 'B', 'A'}; // lbindian
-            os.write(reinterpret_cast<char*>(lbindian),4);
+            unsigned char lbendian[4] = {'D', 'C', 'B', 'A'}; // little/big endian
+            os.write(reinterpret_cast<char*>(lbendian),4);
 
             unsigned arg_size = 4;
             os.write(reinterpret_cast<char*>(&arg_size),sizeof(unsigned));
@@ -175,8 +144,8 @@ namespace OpenMEEG::MeshIOs {
                 ++i;
             }
 
-            unsigned char zero = 0;
-            os.write(reinterpret_cast<char*>(&zero),1);
+            unsigned zero = 0;
+            os.write(reinterpret_cast<char*>(&zero),sizeof(unsigned));
             unsigned ntrgs = mesh.triangles().size();
             os.write(reinterpret_cast<char*>(&ntrgs),sizeof(unsigned));
             os.write(reinterpret_cast<char*>(faces_raw),sizeof(unsigned)*ntrgs*3);

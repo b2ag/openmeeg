@@ -7,3 +7,12 @@ build.ninja
 *.user
 .DS_Store
 __pycache__
+vcpkg/
+b/
+vcpkg_installed/
+openblas/
+install/
+*.orig
+coverage.info
+.vscode/
+Testing/

@@ -1,50 +1,9 @@
-/* FILE: $Id: make_nerve.cpp 2008-04-03 $*/
-
-/*
-  Project Name : OpenMEEG
-
-  author            : $Author: mclerc$
-  version           : $Revision$
-  last revision     : $Date$
-  modified by       : $LastChangedBy$
-  last modified     : $LastChangedDate$
-
-  © INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-  GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-  Emmanuel OLIVI
-  Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-  kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-  The OpenMEEG software is a C++ package for solving the forward/inverse
-  problems of electroencephalography and magnetoencephalography.
-
-  This software is governed by the CeCILL-B license under French law and
-  abiding by the rules of distribution of free software.  You can  use,
-  modify and/ or redistribute the software under the terms of the CeCILL-B
-  license as circulated by CEA, CNRS and INRIA at the following URL
-  "http://www.cecill.info".
-
-  As a counterpart to the access to the source code and  rights to copy,
-  modify and redistribute granted by the license, users are provided only
-  with a limited warranty  and the software's authors,  the holders of the
-  economic rights,  and the successive licensors  have only  limited
-  liability.
-
-  In this respect, the user's attention is drawn to the risks associated
-  with loading,  using,  modifying and/or developing or reproducing the
-  software by the user in light of its specific status of free software,
-  that may mean  that it is complicated to manipulate,  and  that  also
-  therefore means  that it is reserved for developers  and  experienced
-  professionals having in-depth computer knowledge. Users are therefore
-  encouraged to load and test the software's suitability as regards their
-  requirements in conditions enabling the security of their systems and/or
-  data to be ensured and,  more generally, to use and operate it in the
-  same conditions as regards security.
-
-  The fact that you are presently reading this means that you have had
-  knowledge of the CeCILL-B license and that you accept its terms.
-
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #include <iostream>
 #include <fstream>
@@ -152,7 +111,7 @@ cylindre(const std::string& namesurf,const char namepatches[],const char namepat
     const unsigned nio = num_points(io,d/R);
     const double   dio = step_size(io,nio);
 
-    const unsigned ntheta = 2*(neo+nio);                //number of points on an outer circle
+    const unsigned ntheta = 2*(neo+nio); // Number of points on an outer circle
     const double   dtheta = 2*Pi/ntheta;
     const double   dt     =  dtheta*R;
 
@@ -181,7 +140,7 @@ cylindre(const std::string& namesurf,const char namepatches[],const char namepat
     double zz = nl*dl+z-diz;
     const unsigned gmax[] = { 1+niz, nez, niz, nez, niz2, nez, niz };
     const double   dzz[]  = {   diz, dez, diz, dez, diz2, dez, diz };
-    for (unsigned j=0,l=1; j<=6; ++j,l=0) {
+    for (unsigned j=0; j<=6; ++j) {
         for (unsigned g=0; g<gmax[j]; ++g) {
             zz += dzz[j];
             for (unsigned k=0; k<4; ++k) {
@@ -272,8 +231,6 @@ cylindre(const std::string& namesurf,const char namepatches[],const char namepat
         }
     }
 
-    const unsigned n2 = vertices.size()-ntheta;
-
     //  Lids:
 
     make_lid(0,R,z,  dt,(1-nl)*dtheta/2+decal_theta,vertices,triangles);
@@ -347,10 +304,14 @@ cylindre(const std::string& namesurf,const char namepatches[],const char namepat
 int main(int argc, char** argv) {
 
     const CommandLine cmd(argc,argv,"Make nerve geometry from existing parameters or make nerve geometry and parameter file from commandline user interface.");
-    if ((!strcmp(argv[1],"-h")) || (!strcmp(argv[1], "--help")))
+
+    if (cmd.help_mode()) {
         getHelp(argv);
+        return 0;
+    }
+
     print_version(argv[0]);
-    print_commandline(argc,argv);
+    cmd.print();
 
     // input("number of cylinders (for the moment fixed to 2) :",Nc);
 

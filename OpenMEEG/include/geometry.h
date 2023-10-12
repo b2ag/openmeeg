@@ -1,41 +1,9 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre 
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #pragma once
 
@@ -51,7 +19,7 @@ knowledge of the CeCILL-B license and that you accept its terms.
 #include <domain.h>
 #include <matrix.h>
 
-#include <GeometryExceptions.H>
+#include <OMExceptions.H>
 
 namespace OpenMEEG {
 
@@ -86,7 +54,11 @@ namespace OpenMEEG {
 
         /// Constructors
 
-        Geometry() {}
+        Geometry() { }
+
+        Geometry(const unsigned n) {
+            meshes().reserve(n);
+        }
 
         Geometry(const std::string& geomFileName,const bool OLD_ORDERING=false) {
             load(geomFileName,OLD_ORDERING);
@@ -103,7 +75,13 @@ namespace OpenMEEG {
             Geometry(std::string(geomFileName),std::string(condFileName),OLD_ORDERING) { }
 
         void info(const bool verbose=false) const; ///< \brief Print information on the geometry
-        bool has_conductivities()           const { return conductivities; } // TODO: Is this useful ?
+        bool has_conductivities()           const {
+            for (const auto& domain : domains())
+                if (!domain.has_conductivity())
+                    return false;
+            return true;
+        }
+
         bool selfCheck()                    const; ///< \brief the geometry meshes intersect each other
         bool check(const Mesh& m)           const; ///< \brief check if m intersect geometry meshes
         bool check_inner(const Matrix& m)   const; ///< \brief check if dipoles are outside of geometry meshes
@@ -182,9 +160,16 @@ namespace OpenMEEG {
         size_t nb_parameters() const { return num_params; } ///< \brief the total number of vertices + triangles
 
         /// Returns the outermost domain.
+        // It is unclear whether outermost_domain and set_outermost_domain need to be in the public interface.
 
         Domain& outermost_domain();
-        void    set_outermost_domain(const Domain& domain) { outer_domain = &domain; } //   Do we need this (and the previous) or can they be hidden ?
+
+        void set_outermost_domain(Domain& domain) {
+            outer_domain = &domain;
+            for (auto& boundary : domain.boundaries())
+                boundary.interface().set_to_outermost();
+        }
+
         bool    is_outermost(const Domain& domain) const { return outer_domain==&domain; }
 
         const Interface& outermost_interface() const; ///< \brief returns the outermost interface (only valid for nested geometries).
@@ -198,14 +183,28 @@ namespace OpenMEEG {
         double sigma_inv(const Mesh& m1,const Mesh& m2) const { return eval_on_common_domains<INVERSE>(m1,m2);   } // return the (sum) inverse of conductivity(ies) of the shared domain(s).
         double indicator(const Mesh& m1,const Mesh& m2) const { return eval_on_common_domains<INDICATOR>(m1,m2); } // return the (sum) indicator function of the shared domain(s).
 
-        double conductivity_difference(const Mesh& m) const; // return the difference of conductivities of the 2 domains.
+        /// \brief Return the conductivity jump across a mesh (i.e. between the 2 domains it separates).
+
+        double conductivity_jump(const Mesh& m) const {
+            const DomainsReference& doms = domains(m);
+            double res = 0.0;
+            for (const auto& domainptr : doms)
+                res += domainptr->conductivity()*domainptr->mesh_orientation(m);
+            return res;
+        }
 
         /// \brief Give the relative orientation of two meshes:
         /// \return  0, if they don't have any domains in common
         ///          1, if they are both oriented toward the same domain
         ///         -1, if they are not
 
-        int oriented(const Mesh&,const Mesh&) const;
+        int relative_orientation(const Mesh& m1,const Mesh& m2) const {
+            if (&m1==&m2) // Fast path for identical meshes.
+                return 1;
+            const DomainsReference& doms = common_domains(m1,m2); // 2 meshes have either 0, 1 or 2 domains in common
+            return (doms.size()==0) ? 0 : ((doms[0]->mesh_orientation(m1)==doms[0]->mesh_orientation(m2)) ? 1 : -1);
+        }
+
 
         //  Calling this method read induces failures due do wrong conversions when read is passed with one or two arguments...
 
@@ -230,23 +229,23 @@ namespace OpenMEEG {
             // TODO: We should check the correct decomposition of the geometry into domains here.
             // In a correct decomposition, each interface is used exactly once ?? Unsure...
             // Search for the outermost domain and set boolean OUTERMOST on the domain in the vector domains.
-            // An outermost domain is (here) defined as the only domain outside represented by only one interface.
+            // An outermost domain is defined as the only domain which has no inside. It is supposed to be
+            // unique.
 
             if (has_conductivities())
                 mark_current_barriers(); // mark meshes that touch the domains of null conductivity.
 
             if (domains().size()!=0) {
-                Domain& outer_domain = outermost_domain();
-                set_outermost_domain(outer_domain);
-                //  TODO: Integrate this loop (if necessary) in set_outermost_domain...
-                for (auto& boundary : outer_domain.boundaries())
-                    boundary.interface().set_to_outermost();
-
+                set_outermost_domain(outermost_domain());
                 check_geometry_is_nested();
             }
 
             generate_indices(OLD_ORDERING);
             make_mesh_pairs();
+            #ifdef DEBUG
+            for (const auto& mesh : meshes())
+                mesh.check_consistency("geometry finalize step");
+            #endif
         }
 
         /// Handle multiple isolated domains
@@ -265,7 +264,7 @@ namespace OpenMEEG {
             geom_vertices.clear();
             geom_meshes.clear();
             geom_domains.clear();
-            conductivities = nested = false;
+            nested = false;
             outer_domain = 0;
             num_params = 0;
         }
@@ -277,16 +276,15 @@ namespace OpenMEEG {
 
         /// Members
 
-        Vertices     geom_vertices;
-        Meshes       geom_meshes;
-        Domains      geom_domains;
+        Vertices      geom_vertices;
+        Meshes        geom_meshes;
+        Domains       geom_domains;
 
         const Domain* outer_domain   = 0;
         bool          nested         = false;
-        bool          conductivities = false; //    Is this really useful ??
         size_t        num_params     = 0;   // total number = nb of vertices + nb of triangles
 
-        void  generate_indices(const bool);
+        void generate_indices(const bool);
 
         DomainsReference common_domains(const Mesh& m1,const Mesh& m2) const {
             const DomainsReference& doms1 = domains(m1);
@@ -298,9 +296,9 @@ namespace OpenMEEG {
 
         //  Accumulate a function over the domain common to two meshes.
 
-        static double IDENTITY(const Domain& domain)  { return domain.conductivity();     }
-        static double INVERSE(const Domain& domain)   { return 1.0/domain.conductivity(); }
-        static double INDICATOR(const Domain& domain) { return 1.0;                       }
+        static double IDENTITY(const Domain& domain) { return domain.conductivity();     }
+        static double INVERSE(const Domain& domain)  { return 1.0/domain.conductivity(); }
+        static double INDICATOR(const Domain&)       { return 1.0;                       }
 
         template <double Function(const Domain&)>
         double eval_on_common_domains(const Mesh& m1,const Mesh& m2) const {

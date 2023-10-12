@@ -1,41 +1,9 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre 
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #include <cstring>
 
@@ -49,8 +17,8 @@ knowledge of the CeCILL-B license and that you accept its terms.
 using namespace OpenMEEG;
 
 void
-getHelp(char** argv) {
-    std::cout << argv[0] <<" [-option] [filepaths...]" << std::endl << std::endl
+help(const char* cmd_name) {
+    std::cout << cmd_name <<" [-option] [filepaths...]" << std::endl << std::endl
               << "   Inverse HeadMatrix " << std::endl
               << "   Filepaths are in order :" << std::endl
               << "       HeadMat (bin), HeadMatInv (bin)" << std::endl << std::endl;
@@ -59,22 +27,27 @@ getHelp(char** argv) {
 }
 
 int
-main(int argc,char* argv[]) {
+main(int argc,char* argv[]) try {
 
     print_version(argv[0]);
+    const CommandLine cmd(argc,argv);
 
-    if (argc==1) {
-        std::cerr << "Not enough arguments \nPlease try \"" << argv[0] << " -h\" or \"" << argv[0] << " --help \" \n" << std::endl;
+    if (cmd.help_mode()) {
+        help(argv[0]);
         return 0;
     }
 
-    if ((!strcmp(argv[1],"-h")) || (!strcmp(argv[1],"--help"))) getHelp(argv);
+    if (argc<3) {
+        std::cerr << "Not enough arguments." << std::endl;
+        help(argv[0]);
+        return 1;
+    }
 
-    print_commandline(argc,argv);
+    cmd.print();
 
     // Start Chrono
 
-    auto start_time = std::chrono::system_clock::now();
+    const auto start_time = std::chrono::system_clock::now();
 
     SymMatrix HeadMat;
 
@@ -84,8 +57,14 @@ main(int argc,char* argv[]) {
 
     // Stop Chrono
 
-    auto end_time = std::chrono::system_clock::now();
+    const auto end_time = std::chrono::system_clock::now();
     dispEllapsed(end_time-start_time);
 
     return 0;
+} catch (const OpenMEEG::maths::Exception& e) {
+    std::cerr << e.what() << std::endl;
+    return e.code();
+} catch (const std::exception& e) {
+    std::cerr << e.what() << std::endl;
+    return 1;
 }

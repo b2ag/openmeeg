@@ -1,41 +1,9 @@
-/*
-Project Name : OpenMEEG
-
-© INRIA and ENPC (contributors: Geoffray ADDE, Maureen CLERC, Alexandre
-GRAMFORT, Renaud KERIVEN, Jan KYBIC, Perrine LANDREAU, Théodore PAPADOPOULO,
-Emmanuel OLIVI
-Maureen.Clerc.AT.inria.fr, keriven.AT.certis.enpc.fr,
-kybic.AT.fel.cvut.cz, papadop.AT.inria.fr)
-
-The OpenMEEG software is a C++ package for solving the forward/inverse
-problems of electroencephalography and magnetoencephalography.
-
-This software is governed by the CeCILL-B license under French law and
-abiding by the rules of distribution of free software.  You can  use,
-modify and/ or redistribute the software under the terms of the CeCILL-B
-license as circulated by CEA, CNRS and INRIA at the following URL
-"http://www.cecill.info".
-
-As a counterpart to the access to the source code and  rights to copy,
-modify and redistribute granted by the license, users are provided only
-with a limited warranty  and the software's authors,  the holders of the
-economic rights,  and the successive licensors  have only  limited
-liability.
-
-In this respect, the user's attention is drawn to the risks associated
-with loading,  using,  modifying and/or developing or reproducing the
-software by the user in light of its specific status of free software,
-that may mean  that it is complicated to manipulate,  and  that  also
-therefore means  that it is reserved for developers  and  experienced
-professionals having in-depth computer knowledge. Users are therefore
-encouraged to load and test the software's suitability as regards their
-requirements in conditions enabling the security of their systems and/or
-data to be ensured and,  more generally, to use and operate it in the
-same conditions as regards security.
-
-The fact that you are presently reading this means that you have had
-knowledge of the CeCILL-B license and that you accept its terms.
-*/
+// Project Name: OpenMEEG (http://openmeeg.github.io)
+// © INRIA and ENPC under the French open source license CeCILL-B.
+// See full copyright notice in the file LICENSE.txt
+// If you make a copy of this file, you must either:
+// - provide also LICENSE.txt and modify this header to refer to it.
+// - replace this header by the LICENSE.txt content.
 
 #pragma once
 
@@ -51,10 +19,13 @@ knowledge of the CeCILL-B license and that you accept its terms.
 #include <om_utils.h>
 
 #include <symmatrix.h>
+#include <block_matrix.h>
 
 namespace OpenMEEG {
 
     class Geometry;
+    using maths::Range;
+    using maths::Ranges;
 
     //  Mesh class
     //  \brief Mesh is a collection of triangles associated to a geometry containing the points
@@ -84,10 +55,10 @@ namespace OpenMEEG {
 
         Mesh(const unsigned nv,const unsigned nt,Geometry* geometry=nullptr);
 
-        #ifndef WIN32
-        Mesh(const Mesh&) = delete;
+        Mesh(const Mesh&) = default;
         Mesh(Mesh&& m) = default;
-        #endif
+        // MSVC 2019 https://stackoverflow.com/questions/31264984/c-compiler-error-c2280-attempting-to-reference-a-deleted-function-in-visual
+        Mesh& operator=(const Mesh&) = default;
 
         /// Constructors
         /// \param filename mesh file name
@@ -148,16 +119,42 @@ namespace OpenMEEG {
         bool operator!=(const Mesh& m) const { return triangles()!=m.triangles(); }
 
         /// \brief Print info
-        ///  Print to std::cout some info about the mesh
+        ///  Print to std::cout some info about the mesh.
         ///  \return void \sa
 
         void info(const bool verbose=false) const; ///< \brief Print mesh information.
-        bool has_self_intersection() const; ///< \brief Check whether the mesh self-intersects.
-        bool intersection(const Mesh&) const; ///< \brief Check whether the mesh intersects another mesh.
-        bool has_correct_orientation() const; ///< \brief Check local orientation of mesh triangles.
-        void generate_indices(); ///< \brief Generate indices (if allocate).
-        void update(const bool topology_changed); ///< \brief Recompute triangles normals, area, and vertex triangles.
-        void merge(const Mesh&,const Mesh&); ///< Merge two meshes.
+        bool has_self_intersection() const;        ///< \brief Check whether the mesh self-intersects.
+        bool intersection(const Mesh&) const;      ///< \brief Check whether the mesh intersects another mesh.
+        bool has_correct_orientation() const;      ///< \brief Check local orientation of mesh triangles.
+        void generate_indices();                   ///< \brief Generate indices (if allocate).
+        void update(const bool topology_changed);  ///< \brief Recompute triangles normals, area, and vertex triangles.
+        void merge(const Mesh&,const Mesh&);       ///< Merge two meshes.
+
+        #ifdef DEBUG
+        void check_consistency(const std::string&) const; ///< \brief Check mesh triangle/vertex consistency.
+        #endif
+
+        /// \brief Get the ranges of the specific mesh in the global matrix.
+        /// \return vector of Range \sa
+
+        Ranges vertices_ranges() const {
+            std::vector<size_t> indices;
+            for (const auto& vertex : vertices())
+                indices.push_back(vertex->index());
+            std::sort(indices.begin(),indices.end());
+            Ranges result;
+            for (auto it=indices.begin(); it!=indices.end();) {
+                auto it1 = it;
+                for (auto it2=it1+1; it2!=indices.end() && *it2==*it1+1; it1=it2++);
+                result.push_back(Range(*it,*it1));
+                it = it1+1;
+            }
+            return result;
+        }
+
+        //  Triangles always have a contiguous range as they are never shared between meshes.
+
+        Range triangles_range() const { return Range(triangles().front().index(),triangles().back().index()); }
 
         /// \brief Get the triangles adjacent to vertex \param V .
 
@@ -216,7 +213,7 @@ namespace OpenMEEG {
 
         void save(const std::string& filename) const ;
 
-    #ifndef SWIGPYTHON
+    #if !defined(SWIGPYTHON) && !defined(_MSC_VER)
     private:
     #endif
 
